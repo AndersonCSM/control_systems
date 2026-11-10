@@ -93,3 +93,33 @@ control_systems/
 3. Se necessário, envie `'c'` para calibrar a referência com a haste em repouso apontando para baixo ($0,00^\circ$).
 4. Levante a haste manualmente até próximo ao topo ($180^\circ \pm 30^\circ$): o controle armará automaticamente (`ctrl=ON`).
 5. Caso o braço gire mais de $\pm 130^\circ$, o desarme de segurança desliga o motor para proteger o cabo do encoder.
+
+---
+
+## Pontos de Atenção, Limitações Físicas e Oportunidades de Melhoria
+
+Durante os ensaios práticos na bancada experimental e o desenvolvimento iterativo do controle, foram identificadas restrições físicas e comportamentos dinâmicos que exigem atenção dos operadores e servem como oportunidades para trabalhos futuros:
+
+### 1. Estabilidade Vinculada a um Ponto Fixo do Eixo
+* **Comportamento Atual:** No firmware de produção ([`firmware/final/final.ino`](firmware/final/final.ino)), a coordenada de centro do braço (`step_zero`) é congelada na posição exata em que o motor se encontra no milissegundo de acionamento do controle no topo. A malha do braço atua como uma mola virtual tentando mantê-lo rigidamente ancorado a essa coordenada angular.
+* **Limitação:** O sistema só sustenta o equilíbrio se puder retornar a esse ponto fixo específico do motor. Ele não permite que o operador desloque o pêndulo suavemente pela bancada ou altere a referência espacial de operação em tempo real sem gerar esforço restaurador.
+* **Trabalho Futuro:** Implementação de seguimento de referência externa com pré-filtro dinâmico (feedforward) ou desacoplamento entre equilíbrio e posicionamento livre.
+
+### 2. Limitação Física do Cabeamento e Restrição de Giro ($\pm 130^\circ$)
+* **Restrição Mecânica:** O encoder óptico incremental de $600\text{ PPR}$ está montado no eixo móvel da haste, e sua fiação conecta-se diretamente à shield do ESP32 na base fixa. Como a montagem **não possui anel coletor elétrico (*slip ring*)**, o motor não pode girar continuamente sem torcer, tracionar e eventualmente romper os fios dos canais A/B e alimentação.
+* **Proteção no Firmware:** Para blindar o hardware, implementou-se o desligamento instantâneo do motor caso a excursão ultrapasse `LIMITE_BRACO_DEG = 130.0f`.
+* **Impacto no Controle:** Essa restrição reduz a bacia de atração do sistema: distúrbios maiores que exijam mais de $130^\circ$ de deslocamento para recuperar o pêndulo desarmam o motor por segurança antes que o equilíbrio possa ser restaurado.
+
+### 3. Sensibilidade a Distúrbios e Giro Excessivo do Braço
+* **Comportamento:** Ao aplicar pequenos toques manuais na haste, o motor reage rapidamente com pulsos de aceleração para colocar a base sob o centro de gravidade em queda.
+* **Causa Identificada:** Embora o controlador da haste restabeleça a vertical rapidamente, o braço do motor acumula velocidade angular. Como o amortecimento viscoso virtual (`K_VEL_BRACO`) e o retorno elástico (`K_POS_BRACO`) são calibrados para serem suaves e não derrubarem a haste, o braço leva um longo percurso angular para frear totalmente, gerando excursões amplas que se aproximam do limite do cabo.
+* **Tentativas Exploradas:** O aumento excessivo do amortecimento no modelo de torque gerou instabilidade na haste. Modelos em espaço de estados com desacoplamento por aceleração direta foram experimentados e encontram-se documentados em [`materiais_pesquisa/`](materiais_pesquisa/).
+
+### 4. Deriva Direcional por Erro Estático de Zero do Encoder
+* **Desafio:** Se a calibração com o comando `'c'` for executada com a haste minimamente fora da vertical inferior real (ex.: $0,2^\circ$ de desvio residual provocado por atrito do rolamento ou desnível da bancada), a posição de referência de $180^\circ$ não coincidirá perfeitamente com o topo gravitacional verdadeiro.
+* **Consequência:** A haste em $180,0^\circ$ sofre uma força de tombamento constante devida à gravidade. Como a malha integra o torque em aceleração do motor, o braço passa a se mover continuamente em uma única direção (*creep/drift* contínuo), enrolando o cabo até desarmar.
+* **Tentativas Exploradas:** No diretório [`materiais_pesquisa/ref/`](materiais_pesquisa/ref/), preservou-se uma rotina de autocalibração dinâmica baseada no centro de oscilação do pêndulo em balanço livre (comando `'w'`), que calcula o repouso verdadeiro compensando o decaimento por atrito.
+
+### 5. Dinâmica de Fase Não-Mínima do Pêndulo Furuta
+* **Característica Físico-Matemática:** A planta linearizada do braço rotativo possui um zero de transmissão no semiplano direito (RHP). Isso significa que, para deslocar a base em um sentido, o motor precisa primeiramente acelerar ligeiramente no **sentido contrário** para tombar a haste antes de avançar. Esse efeito físico impõe um limite fundamental de largura de banda e exige cautela na sintonia dos ganhos do braço para evitar oscilações de baixa frequência (*limit cycle*).
+
