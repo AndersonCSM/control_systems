@@ -36,27 +36,20 @@
 #define FREQ_MAX_HZ    4000.0f   // Frequência máxima de STEP (Hz)
 
 /* ============================================================
- * VARIÁVEIS GLOBAIS E HARDWARE TIMER
+ * VARIÁVEIS GLOBAIS ORGANIZADAS POR SUBSISTEMA
  * ============================================================ */
-volatile bool    flag_1khz     = false;
-volatile long    encoder_count = 0;
-volatile uint8_t enc_state     = 0;
-volatile int32_t g_rate_half   = 0;
 
-static uint32_t  s_phase       = 0;
-static bool      s_pulse_high  = false;
-static bool      s_pending     = false;
-static int8_t    s_dir_cur     = 1;
-static uint8_t   s_div_1khz    = 0;
-static float     vel_cmd_rad_s = 0.0f;
-static PID_t     pid;
+/* 1) Microcontrolador, Timer de Tempo Real (20 kHz -> 1 kHz) e PID */
+hw_timer_t *     timer         = NULL;  // Ponteiro do Hardware Timer do ESP32 (dispara a cada 50 us)
+volatile bool    flag_1khz     = false; // Bandeira que libera o cálculo do PID a exatos 1 kHz (1 ms)
+static uint8_t   s_div_1khz    = 0;     // Contador divisor de frequência (conta 20 ticks de 50 us = 1 ms)
+static PID_t     pid;                   // Estrutura principal do controlador PID
 
-hw_timer_t *     timer         = NULL;
+/* 2) Encoder Incremental em Quadratura (Haste do Pêndulo) */
+volatile long    encoder_count = 0;     // Contagem acumulada de pulsos do encoder (2400 pulsos/volta)
+volatile uint8_t enc_state     = 0;     // Histórico de 4 bits dos canais A/B ([A_ant B_ant A_atual B_atual])
 
-#define STEP_MASK (1UL << PIN_STEP)
-#define DIR_MASK  (1UL << PIN_DIR)
-
-/* Tabela de estados de quadratura x4 */
+/* Tabela de transição de estados de quadratura (rejeita bounce/ruído em pino único) */
 static const int8_t DRAM_ATTR QUAD_TABLE[16] = {
      0, -1,  1,  0,
      1,  0,  0, -1,
@@ -64,12 +57,24 @@ static const int8_t DRAM_ATTR QUAD_TABLE[16] = {
      0,  1, -1,  0
 };
 
+/* Leitura ultra-rápida dos GPIOs 32 e 33 direto do registrador de hardware in1 */
 static inline uint8_t IRAM_ATTR ler_ab_fast(void) {
     uint32_t in1 = GPIO.in1.val;
     uint8_t a = (in1 >> (PIN_ENC_A - 32)) & 1U;
     uint8_t b = (in1 >> (PIN_ENC_B - 32)) & 1U;
     return (a << 1) | b;
 }
+
+/* 3) Motor de Passo (Gerador de Pulsos DDS a 20 kHz) */
+#define STEP_MASK (1UL << PIN_STEP)     // Máscara de bit do pino STEP (GPIO 25) p/ escrita rápida em registrador
+#define DIR_MASK  (1UL << PIN_DIR)      // Máscara de bit do pino DIR  (GPIO 26) p/ escrita rápida em registrador
+
+volatile int32_t g_rate_half   = 0;     // Passo de incremento do DDS proporcional à frequência (Hz) comandada
+static uint32_t  s_phase       = 0;     // Acumulador de fase de 32 bits (quando transborda, emite 1 pulso STEP)
+static bool      s_pulse_high  = false; // Indica se o pino STEP está em HIGH (para baixá-lo após 50 us)
+static bool      s_pending     = false; // Guarda pedido de pulso STEP caso o transbordo ocorra durante a descida do pino
+static int8_t    s_dir_cur     = 1;     // Sentido atual do motor (+1 ou -1) para detectar inversão do pino DIR
+static float     vel_cmd_rad_s = 0.0f;  // Velocidade angular do motor (rad/s) obtida integrando a aceleração (tau/J)
 
 /* ISR de 20 kHz: lê o encoder sem perder pulsos, gera o trem de pulsos STEP
  * para o A4988 e marca a flag de 1 kHz (1 ms) para o PID.
