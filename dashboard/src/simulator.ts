@@ -22,13 +22,16 @@ const K_POS_BRACO = 0.0025;
 const K_VEL_BRACO = 0.0012;
 const LIMITE_BRACO_DEG = 130.0;
 
+export type SimulatorFirmwareMode = 'melhorado' | 'simples';
+
 /**
  * Simulador físico não-linear do pêndulo invertido + controlador PID idêntico ao C do ESP32.
- * Emite exatamente o mesmo protocolo textual (P, T, E e LOG.TXT) a 100 Hz.
+ * Suporta emular tanto o firmware 'melhorado' quanto o 'simples'.
  */
 export class PendulumSimulator {
   private readonly onLine: (line: string) => void;
   private timerId: ReturnType<typeof setInterval> | null = null;
+  public firmwareMode: SimulatorFirmwareMode = 'melhorado';
 
   private tMs = 0;
   private thetaRad = (180.0 - 12.0) * DEG2RAD; // Inicia a 168° (dentro da zona ativa p/ estabilizar logo)
@@ -66,6 +69,19 @@ export class PendulumSimulator {
     return this.timerId !== null;
   }
 
+  setFirmwareMode(mode: SimulatorFirmwareMode): void {
+    this.firmwareMode = mode;
+    this.resetPid();
+    const modeName = mode === 'simples' ? 'SIMPLES (PID Puro)' : 'MELHORADO (DDS + Filtro 15Hz)';
+    this.onLine(`E,SIM_MODE,${modeName}`);
+  }
+
+  toggleFirmwareMode(): SimulatorFirmwareMode {
+    const next = this.firmwareMode === 'melhorado' ? 'simples' : 'melhorado';
+    this.setFirmwareMode(next);
+    return next;
+  }
+
   start(): void {
     if (this.timerId !== null) return;
     this.tMs = 0;
@@ -77,7 +93,11 @@ export class PendulumSimulator {
     this.resetPid();
 
     this.onLine('==================================================');
-    this.onLine('SIMULADOR FISICO 1kHz - Pendulo Invertido (m=8.5g, l=29cm)');
+    if (this.firmwareMode === 'simples') {
+      this.onLine('BOOT OK - Controle 2 SIMPLES (PID Puro + FT Pura)');
+    } else {
+      this.onLine('BOOT OK - Controle 2 FINAL SLIM (Deriv=15Hz | FreqMax=4000Hz)');
+    }
     this.onLine('==================================================');
     this.emitParams();
     this.onLine('E,BOOT,SIMULADOR');
@@ -260,10 +280,21 @@ export class PendulumSimulator {
     const e = (setpointDeg - angDeg) * DEG2RAD;
     const pTerm = this.kp * e;
     const derivBruta = (e - this.erroAnterior) / DT;
-    this.derivFiltrada += ALPHA_D * (derivBruta - this.derivFiltrada);
-    const dTerm = this.kd * this.derivFiltrada;
 
-    const iNovo = this.integral * 0.995 + e * DT;
+    let dTerm = 0;
+    let iNovo = 0;
+
+    if (this.firmwareMode === 'simples') {
+      // Firmware Simples: Derivada pura sem filtro e integrador puro sem vazamento (leak)
+      dTerm = this.kd * derivBruta;
+      iNovo = this.integral + e * DT;
+    } else {
+      // Firmware Melhorado: Filtro passa-baixas de 15 Hz na derivada e leak_i = 0.995
+      this.derivFiltrada += ALPHA_D * (derivBruta - this.derivFiltrada);
+      dTerm = this.kd * this.derivFiltrada;
+      iNovo = this.integral * 0.995 + e * DT;
+    }
+
     const iTerm = this.ki * iNovo;
 
     let u = pTerm + iTerm + dTerm;
@@ -292,7 +323,7 @@ export class PendulumSimulator {
     let tau = 0;
 
     const dentroTopo = Math.abs(r - ang) <= DEFAULT_LGR.zonaDeg;
-    const caboSeguro = !this.controleAtivo || Math.abs(bracoDeg) <= LIMITE_BRACO_DEG;
+    const caboSeguro = this.firmwareMode === 'simples' || !this.controleAtivo || Math.abs(bracoDeg) <= LIMITE_BRACO_DEG;
 
     if (dentroTopo && caboSeguro) {
       if (!this.controleAtivo) {
@@ -306,7 +337,9 @@ export class PendulumSimulator {
       }
 
       tauPid = this.calcularPid(r, ang);
-      const tauBraco = -K_POS_BRACO * this.bracoRad - K_VEL_BRACO * this.velCmdRadS;
+      const tauBraco = this.firmwareMode === 'simples'
+        ? 0
+        : -K_POS_BRACO * this.bracoRad - K_VEL_BRACO * this.velCmdRadS;
       tau = (tauPid + tauBraco) * this.sinalMotor;
 
       const tauClamped = Math.max(-DEFAULT_LGR.torqueMaxNm, Math.min(DEFAULT_LGR.torqueMaxNm, tau));

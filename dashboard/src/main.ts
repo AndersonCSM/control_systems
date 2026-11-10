@@ -59,6 +59,7 @@ function parseDecimal(raw: string): number {
 
 // Elementos do cabeçalho e menu
 const subtitleInfo = mustEl<HTMLParagraphElement>('subtitle-info');
+const titleBadge = mustEl<HTMLSpanElement>('title-badge');
 const statusPill = mustEl<HTMLDivElement>('status-pill');
 const statusText = mustEl<HTMLSpanElement>('status-text');
 const btnConnect = mustEl<HTMLButtonElement>('btn-connect');
@@ -72,6 +73,8 @@ const menuSinal = mustEl<HTMLSpanElement>('menu-sinal');
 const cmdAutocal = mustEl<HTMLButtonElement>('cmd-autocal');
 const cmdInvert = mustEl<HTMLButtonElement>('cmd-invert');
 const cmdLog = mustEl<HTMLButtonElement>('cmd-log');
+const btnSimMode = mustEl<HTMLButtonElement>('btn-sim-mode');
+const simModeLabel = mustEl<HTMLElement>('sim-mode-label');
 const btnSimLift = mustEl<HTMLButtonElement>('btn-sim-lift');
 const btnSimPerturb = mustEl<HTMLButtonElement>('btn-sim-perturb');
 const btnOpenPidModal = mustEl<HTMLButtonElement>('btn-open-pid-modal');
@@ -257,9 +260,23 @@ const serial = new SerialConnection({
 
 const simulator = new PendulumSimulator(handleIncomingLine);
 
+let detectedFirmware: 'simples' | 'melhorado' | 'auto' = 'auto';
+
+function setDetectedFirmware(mode: 'simples' | 'melhorado'): void {
+  detectedFirmware = mode;
+  titleBadge.textContent = mode === 'simples' ? '· ESP32 Simples' : '· ESP32 Melhorado';
+  refreshStatusHeader();
+}
+
 function refreshStatusHeader(): void {
   const baud = baudSelect.value;
-  subtitleInfo.textContent = `ESP32 PID Final · Setpoint ${Math.round(setpointDeg)}° (±${Math.round(zonaDeg)}°) · ${baud} baud`;
+  let fwLabel = 'ESP32 (Simples / Melhorado)';
+  if (detectedFirmware === 'simples') {
+    fwLabel = 'ESP32 Simples (PID Puro)';
+  } else if (detectedFirmware === 'melhorado') {
+    fwLabel = 'ESP32 Melhorado (DDS + Filtro 15Hz)';
+  }
+  subtitleInfo.textContent = `${fwLabel} · Setpoint ${Math.round(setpointDeg)}° (±${Math.round(zonaDeg)}°) · ${baud} baud`;
 
   if (!serial.isConnected && !simulator.isRunning) {
     statusPill.dataset.state = 'disconnected';
@@ -334,6 +351,9 @@ function handleIncomingLine(rawLine: string): void {
 
   switch (msg.type) {
     case 'T': {
+      if (msg.sample.firmwareMode && detectedFirmware !== msg.sample.firmwareMode) {
+        setDetectedFirmware(msg.sample.firmwareMode);
+      }
       latestSample = msg.sample;
       latestStability = stability.update(msg.sample, setpointDeg);
       buffer.push(msg.sample, setpointDeg);
@@ -348,6 +368,14 @@ function handleIncomingLine(rawLine: string): void {
       break;
     }
     case 'E': {
+      if (msg.event.code === 'BOOT') {
+        const detailUpper = msg.event.detail.toUpperCase();
+        if (detailUpper.includes('SIMPLES')) {
+          setDetectedFirmware('simples');
+        } else if (detailUpper.includes('FINAL') || detailUpper.includes('MELHORADO') || detailUpper.includes('SLIM')) {
+          setDetectedFirmware('melhorado');
+        }
+      }
       if (msg.event.code === 'CTRL_OFF' && msg.event.detail) {
         stability.notifyFallReason(msg.event.detail);
       }
@@ -445,6 +473,8 @@ function startSimulation(): void {
   stability.reset();
   latestSample = null;
   latestStability = null;
+  setDetectedFirmware(simulator.firmwareMode);
+  simModeLabel.textContent = simulator.firmwareMode === 'simples' ? 'Simples' : 'Melhorado';
   simulator.start();
   btnSim.dataset.active = 'true';
   btnSim.textContent = 'Parar simulação';
@@ -544,6 +574,13 @@ cmdLog.addEventListener('click', () => {
   closeMoreMenu();
   consoleModal.classList.remove('hidden');
   void sendToTarget('l\n');
+});
+
+btnSimMode.addEventListener('click', () => {
+  const next = simulator.toggleFirmwareMode();
+  simModeLabel.textContent = next === 'simples' ? 'Simples' : 'Melhorado';
+  setDetectedFirmware(next);
+  showToast(`Modo do simulador: ${next === 'simples' ? 'SIMPLES (PID Puro)' : 'MELHORADO (DDS + Filtro 15Hz)'}`);
 });
 
 btnSimLift.addEventListener('click', () => {

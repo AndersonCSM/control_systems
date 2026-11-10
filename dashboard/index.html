@@ -10,8 +10,8 @@
       <!-- TOP HEADER -->
       <header class="topbar">
         <div class="title-block">
-          <h1>Pêndulo Invertido <span class="title-sub">· ESP32 PID Final</span></h1>
-          <p id="subtitle-info" class="subtitle">ESP32 PID Final · Setpoint 180° (±30°) · 115200 baud</p>
+          <h1>Pêndulo Invertido <span class="title-sub" id="title-badge">· ESP32</span></h1>
+          <p id="subtitle-info" class="subtitle">ESP32 (Simples / Melhorado) · Setpoint 180° (±30°) · 115200 baud</p>
         </div>
 
         <div class="header-controls">
@@ -53,6 +53,9 @@
               <div id="sim-menu-group" class="hidden">
                 <div class="menu-divider"></div>
                 <div class="menu-section-label">Simulador físico</div>
+                <button type="button" class="menu-item" id="btn-sim-mode" role="menuitem">
+                  <span>Modo do simulador: <strong id="sim-mode-label">Melhorado</strong></span>
+                </button>
                 <button type="button" class="menu-item" id="btn-sim-lift" role="menuitem">
                   <span>Posicionar haste (165°)</span>
                 </button>
@@ -155,12 +158,12 @@
         <form id="form-kz" class="tuning-form">
           <label class="field-group">
             <span>Ganho K (= Kd)</span>
-            <input id="inp-k" type="text" inputmode="decimal" value="0,018510" autocomplete="off" required />
+            <input id="inp-k" type="text" inputmode="decimal" value="0,015601" autocomplete="off" required />
           </label>
 
           <label class="field-group">
             <span>Zero z (rad/s)</span>
-            <input id="inp-z" type="text" inputmode="decimal" value="6,3640" autocomplete="off" required />
+            <input id="inp-z" type="text" inputmode="decimal" value="5,9888" autocomplete="off" required />
           </label>
 
           <button type="submit" class="btn btn-apply">Aplicar K e z</button>
@@ -168,9 +171,9 @@
         </form>
 
         <div class="gains-summary" aria-label="Ganhos equivalentes Kp, Ki e Kd">
-          <span>Kp <strong id="readout-kp">0,2356</strong></span>
-          <span>Ki <strong id="readout-ki">0,7497</strong></span>
-          <span>Kd <strong id="readout-kd">0,0185</strong></span>
+          <span>Kp <strong id="readout-kp">0,1869</strong></span>
+          <span>Ki <strong id="readout-ki">0,5595</strong></span>
+          <span>Kd <strong id="readout-kd">0,0156</strong></span>
         </div>
       </footer>
     </div>
@@ -201,15 +204,15 @@
           <div class="pid-inputs-grid">
             <label class="field-group">
               <span>Kp</span>
-              <input id="inp-kp" type="text" inputmode="decimal" value="0,235595" required />
+              <input id="inp-kp" type="text" inputmode="decimal" value="0,186868" required />
             </label>
             <label class="field-group">
               <span>Ki</span>
-              <input id="inp-ki" type="text" inputmode="decimal" value="0,749664" required />
+              <input id="inp-ki" type="text" inputmode="decimal" value="0,559556" required />
             </label>
             <label class="field-group">
               <span>Kd</span>
-              <input id="inp-kd" type="text" inputmode="decimal" value="0,018510" required />
+              <input id="inp-kd" type="text" inputmode="decimal" value="0,015601" required />
             </label>
           </div>
           <div class="modal-footer">

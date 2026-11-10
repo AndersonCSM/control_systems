@@ -99,7 +99,7 @@ describe('protocol', () => {
     expect(() => buildPidCommand(-0.1, 1, 0.01)).toThrow();
   });
 
-  it('parses esp32_pid_final.ino human-readable serial log lines', () => {
+  it('parses esp32_pid_final.ino human-readable serial log lines (firmware melhorado)', () => {
     const lineOn =
       'ctrl=ON  | pulsos=  1200 | ang= 180.05° | braco=  +0.2° | tau=+0.0123 N.m | step= +150.0 Hz';
     const resOn = parseLine(lineOn);
@@ -111,6 +111,7 @@ describe('protocol', () => {
       expect(resOn.sample.bracoDeg).toBeCloseTo(0.2, 1);
       expect(resOn.sample.tauTotalNm).toBeCloseTo(0.0123, 4);
       expect(resOn.sample.stepHz).toBeCloseTo(150.0, 1);
+      expect(resOn.sample.firmwareMode).toBe('melhorado');
       expect(resOn.sample.tMs).toBeGreaterThan(0);
     }
 
@@ -124,7 +125,61 @@ describe('protocol', () => {
       expect(resOff.sample.erroDeg).toBeCloseTo(180.0, 2);
       expect(resOff.sample.tauTotalNm).toBeCloseTo(0.0, 4);
       expect(resOff.sample.stepHz).toBeCloseTo(0.0, 1);
+      expect(resOff.sample.firmwareMode).toBe('melhorado');
     }
+  });
+
+  it('parses simples.ino human-readable serial log lines (firmware simples sem campo braco)', () => {
+    const lineOn =
+      'ctrl=ON  | pulsos=  1200 | ang= 180.05° | tau=+0.0123 N.m | step= +150.0 Hz';
+    const resOn = parseLine(lineOn);
+    expect(resOn?.type).toBe('T');
+    if (resOn?.type === 'T') {
+      expect(resOn.sample.ctrl).toBe(true);
+      expect(resOn.sample.angDeg).toBeCloseTo(180.05, 2);
+      expect(resOn.sample.erroDeg).toBeCloseTo(-0.05, 2);
+      expect(resOn.sample.bracoDeg).toBe(0);
+      expect(resOn.sample.tauTotalNm).toBeCloseTo(0.0123, 4);
+      expect(resOn.sample.stepHz).toBeCloseTo(150.0, 1);
+      expect(resOn.sample.firmwareMode).toBe('simples');
+      expect(resOn.sample.tMs).toBeGreaterThan(0);
+    }
+
+    const lineOff =
+      'ctrl=OFF | pulsos=     0 | ang=   0.00° | tau=+0.0000 N.m | step=   +0.0 Hz';
+    const resOff = parseLine(lineOff);
+    expect(resOff?.type).toBe('T');
+    if (resOff?.type === 'T') {
+      expect(resOff.sample.ctrl).toBe(false);
+      expect(resOff.sample.angDeg).toBeCloseTo(0.0, 2);
+      expect(resOff.sample.erroDeg).toBeCloseTo(180.0, 2);
+      expect(resOff.sample.bracoDeg).toBe(0);
+      expect(resOff.sample.tauTotalNm).toBeCloseTo(0.0, 4);
+      expect(resOff.sample.stepHz).toBeCloseTo(0.0, 1);
+      expect(resOff.sample.firmwareMode).toBe('simples');
+    }
+  });
+
+  it('parses simples and melhorado boot banners', () => {
+    const simplesBoot = 'BOOT OK - Controle 2 SIMPLES (PID Puro + FT Pura)';
+    expect(parseLine(simplesBoot)).toEqual({
+      type: 'E',
+      event: {
+        code: 'BOOT',
+        detail: 'Controle 2 SIMPLES (PID Puro + FT Pura)',
+        raw: simplesBoot,
+      },
+    });
+
+    const melhoradoBoot = 'BOOT OK - Controle 2 FINAL SLIM (Deriv=15Hz | FreqMax=4000Hz)';
+    expect(parseLine(melhoradoBoot)).toEqual({
+      type: 'E',
+      event: {
+        code: 'BOOT',
+        detail: 'Controle 2 FINAL SLIM (Deriv=15Hz | FreqMax=4000Hz)',
+        raw: melhoradoBoot,
+      },
+    });
   });
 
   it('parses esp32_pid_final.ino events: boot and zeroing', () => {

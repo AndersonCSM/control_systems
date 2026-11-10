@@ -7,6 +7,7 @@ export interface TelemetrySample {
   tauTotalNm: number;
   stepHz: number;
   bracoDeg: number;
+  firmwareMode?: 'simples' | 'melhorado';
 }
 
 export interface ControllerParams {
@@ -111,10 +112,15 @@ export function resetAutoTimestamp(val = 0): void {
   lastAutoTMs = val;
 }
 
-// Regex para linha de log serial do esp32_pid_final.ino:
+// Regex para linha de log serial do firmware melhorado (com braco):
 // ctrl=ON  | pulsos=  1200 | ang= 180.05° | braco=  +0.2° | tau=+0.0123 N.m | step= +150.0 Hz
-const ESP32_FINAL_LOG_RE =
+const ESP32_MELHORADO_LOG_RE =
   /^ctrl=\s*(ON|OFF)\s*\|\s*pulsos=\s*([+-]?\d+)\s*\|\s*ang=\s*([+-]?[\d.]+)(?:°|deg)?\s*\|\s*braco=\s*([+-]?[\d.]+)(?:°|deg)?\s*\|\s*tau=\s*([+-]?[\d.]+)\s*N\.m\s*\|\s*step=\s*([+-]?[\d.]+)\s*Hz/i;
+
+// Regex para linha de log serial do firmware simples (sem braco):
+// ctrl=ON  | pulsos=  1200 | ang= 180.05° | tau=+0.0123 N.m | step= +150.0 Hz
+const ESP32_SIMPLES_LOG_RE =
+  /^ctrl=\s*(ON|OFF)\s*\|\s*pulsos=\s*([+-]?\d+)\s*\|\s*ang=\s*([+-]?[\d.]+)(?:°|deg)?\s*\|\s*tau=\s*([+-]?[\d.]+)\s*N\.m\s*\|\s*step=\s*([+-]?[\d.]+)\s*Hz/i;
 
 export function parseLine(rawLine: string): ParsedMessage | null {
   const line = rawLine.replace(/\r$/, '').trim();
@@ -148,8 +154,8 @@ export function parseLine(rawLine: string): ParsedMessage | null {
     };
   }
 
-  // Suporte a telemetria do esp32_pid_final.ino (115200 baud / formato human-readable de bancada)
-  const finalMatch = line.match(ESP32_FINAL_LOG_RE);
+  // Suporte a telemetria do firmware melhorado (com medicao de posicao do braco)
+  const finalMatch = line.match(ESP32_MELHORADO_LOG_RE);
   if (finalMatch) {
     const ctrl = finalMatch[1].toUpperCase() === 'ON';
     const angDeg = Number(finalMatch[3]);
@@ -168,6 +174,31 @@ export function parseLine(rawLine: string): ParsedMessage | null {
         tauTotalNm,
         stepHz,
         bracoDeg,
+        firmwareMode: 'melhorado',
+      },
+    };
+  }
+
+  // Suporte a telemetria do firmware simples (sem medicao de braco)
+  const simplesMatch = line.match(ESP32_SIMPLES_LOG_RE);
+  if (simplesMatch) {
+    const ctrl = simplesMatch[1].toUpperCase() === 'ON';
+    const angDeg = Number(simplesMatch[3]);
+    const tauTotalNm = Number(simplesMatch[4]);
+    const stepHz = Number(simplesMatch[5]);
+    const erroDeg = Math.round((DEFAULT_LGR.setpointDeg - angDeg) * 100) / 100;
+    return {
+      type: 'T',
+      sample: {
+        tMs: getAutoTimestampMs(),
+        ctrl,
+        angDeg,
+        erroDeg,
+        tauPidNm: tauTotalNm,
+        tauTotalNm,
+        stepHz,
+        bracoDeg: 0,
+        firmwareMode: 'simples',
       },
     };
   }
