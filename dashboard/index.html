@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pêndulo Invertido · ESP32 PID Final</title>
+  </head>
+  <body>
+    <div class="page-shell">
+      <!-- TOP HEADER -->
+      <header class="topbar">
+        <div class="title-block">
+          <h1>Pêndulo Invertido <span class="title-sub">· ESP32 PID Final</span></h1>
+          <p id="subtitle-info" class="subtitle">ESP32 PID Final · Setpoint 180° (±30°) · 115200 baud</p>
+        </div>
+
+        <div class="header-controls">
+          <div id="status-pill" class="status-indicator" data-state="disconnected" role="status" aria-live="polite">
+            <span class="status-dot"></span>
+            <span id="status-text">Desconectado</span>
+          </div>
+
+          <button id="btn-connect" class="btn btn-connect" type="button">Conectar USB</button>
+          <button id="btn-pause" class="btn btn-outline" type="button">Pausar</button>
+          <button id="btn-sim" class="btn btn-outline" type="button">Simular planta</button>
+
+          <div class="dropdown-wrap">
+            <button
+              id="btn-more"
+              class="btn btn-outline"
+              type="button"
+              aria-haspopup="menu"
+              aria-expanded="false"
+            >
+              Mais ações <span class="caret">▾</span>
+            </button>
+
+            <div id="more-menu" class="dropdown-menu hidden" role="menu">
+              <div class="menu-section-label">Comandos do ESP32</div>
+              <button type="button" class="menu-item" id="cmd-autocal" role="menuitem">
+                <span>Auto-calibrar sentido + zerar encoder</span>
+                <kbd>a</kbd>
+              </button>
+              <button type="button" class="menu-item" id="cmd-invert" role="menuitem">
+                <span>Inverter sentido do motor (<span id="menu-sinal">-1</span>)</span>
+                <kbd>i</kbd>
+              </button>
+              <button type="button" class="menu-item" id="cmd-log" role="menuitem">
+                <span>Despejar LOG.TXT (200 Hz)</span>
+                <kbd>l</kbd>
+              </button>
+
+              <div id="sim-menu-group" class="hidden">
+                <div class="menu-divider"></div>
+                <div class="menu-section-label">Simulador físico</div>
+                <button type="button" class="menu-item" id="btn-sim-lift" role="menuitem">
+                  <span>Posicionar haste (165°)</span>
+                </button>
+                <button type="button" class="menu-item" id="btn-sim-perturb" role="menuitem">
+                  <span>Aplicar perturbação (+8°)</span>
+                </button>
+              </div>
+
+              <div class="menu-divider"></div>
+              <div class="menu-section-label">Avançado &amp; Sessão</div>
+              <button type="button" class="menu-item" id="btn-open-pid-modal" role="menuitem">
+                <span>Ajustar Kp, Ki, Kd direto…</span>
+              </button>
+              <button type="button" class="menu-item" id="btn-open-console" role="menuitem">
+                <span>Console serial &amp; eventos…</span>
+              </button>
+              <button type="button" class="menu-item" id="btn-csv" role="menuitem">
+                <span>Exportar telemetria (.csv)</span>
+              </button>
+              <button type="button" class="menu-item" id="btn-clear" role="menuitem">
+                <span>Limpar gráfico</span>
+              </button>
+
+              <div class="menu-divider"></div>
+              <div class="menu-baud-row">
+                <label for="baud-select">Baud rate</label>
+                <select id="baud-select">
+                  <option value="115200" selected>115200</option>
+                  <option value="921600">921600</option>
+                  <option value="460800">460800</option>
+                  <option value="230400">230400</option>
+                </select>
+              </div>
+
+              <button type="button" class="menu-item hidden" id="btn-linux-perm" role="menuitem">
+                <span>Configurar permissão USB (Linux)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- KPI METRICS ROW -->
+      <section class="kpi-grid" aria-label="Indicadores da resposta no tempo">
+        <article class="kpi-card">
+          <span class="kpi-label">Tempo equilibrado</span>
+          <strong id="kpi-time" class="kpi-value">-- s</strong>
+        </article>
+
+        <article class="kpi-card">
+          <span class="kpi-label">Erro RMS (2 s)</span>
+          <strong id="kpi-rms" class="kpi-value">--°</strong>
+        </article>
+
+        <article class="kpi-card">
+          <span class="kpi-label">Sobressinal</span>
+          <strong id="kpi-overshoot" class="kpi-value">--%</strong>
+        </article>
+
+        <article class="kpi-card">
+          <span class="kpi-label">Acomodação (±5°)</span>
+          <strong id="kpi-settling" class="kpi-value">-- s</strong>
+        </article>
+      </section>
+
+      <!-- MAIN TIME RESPONSE CHART CARD -->
+      <main class="chart-panel">
+        <div class="chart-header">
+          <div class="chart-title-wrap">
+            <h2>Resposta no tempo</h2>
+            <span id="fall-chip" class="fall-chip hidden"></span>
+          </div>
+
+          <div class="chart-toolbar">
+            <div class="legend-inline" aria-hidden="true">
+              <span class="legend-entry">
+                <span class="swatch-dashed"></span>
+                Setpoint 180°
+              </span>
+              <span class="legend-entry">
+                <span class="swatch-solid"></span>
+                Ângulo θ
+              </span>
+            </div>
+
+            <label for="window-select" class="sr-only">Janela de tempo</label>
+            <select id="window-select" class="toolbar-select">
+              <option value="5">Janela 5 s</option>
+              <option value="10" selected>Janela 10 s</option>
+              <option value="20">Janela 20 s</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="chart-response" class="chart-canvas-wrap"></div>
+      </main>
+
+      <!-- BOTTOM CONTROLLER TUNING BAR -->
+      <footer class="tuning-bar">
+        <form id="form-kz" class="tuning-form">
+          <label class="field-group">
+            <span>Ganho K (= Kd)</span>
+            <input id="inp-k" type="text" inputmode="decimal" value="0,018510" autocomplete="off" required />
+          </label>
+
+          <label class="field-group">
+            <span>Zero z (rad/s)</span>
+            <input id="inp-z" type="text" inputmode="decimal" value="6,3640" autocomplete="off" required />
+          </label>
+
+          <button type="submit" class="btn btn-apply">Aplicar K e z</button>
+          <button type="button" id="btn-reset-lgr" class="btn btn-outline">Padrão LGR</button>
+        </form>
+
+        <div class="gains-summary" aria-label="Ganhos equivalentes Kp, Ki e Kd">
+          <span>Kp <strong id="readout-kp">0,2356</strong></span>
+          <span>Ki <strong id="readout-ki">0,7497</strong></span>
+          <span>Kd <strong id="readout-kd">0,0185</strong></span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- MODAL: SELETOR DE PORTA SERIAL (APP DESKTOP .EXE / .APPIMAGE) -->
+    <div id="port-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="port-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="port-modal-title">Selecionar porta USB do ESP32</h3>
+          <button type="button" id="btn-close-port-modal" class="modal-close" aria-label="Fechar">✕</button>
+        </div>
+        <p class="modal-desc">Escolha a porta correspondente ao ESP32 (CP2102, CH340 ou USB nativo):</p>
+        <div id="port-list" class="port-list"></div>
+        <div class="modal-footer">
+          <button type="button" id="btn-cancel-port" class="btn btn-outline">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: AJUSTE DIRETO DE KP, KI, KD -->
+    <div id="pid-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pid-modal-title">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="pid-modal-title">Ajustar Kp, Ki e Kd diretamente</h3>
+          <button type="button" id="btn-close-pid-modal" class="modal-close" aria-label="Fechar">✕</button>
+        </div>
+        <form id="form-pid-direct" class="modal-form">
+          <div class="pid-inputs-grid">
+            <label class="field-group">
+              <span>Kp</span>
+              <input id="inp-kp" type="text" inputmode="decimal" value="0,235595" required />
+            </label>
+            <label class="field-group">
+              <span>Ki</span>
+              <input id="inp-ki" type="text" inputmode="decimal" value="0,749664" required />
+            </label>
+            <label class="field-group">
+              <span>Kd</span>
+              <input id="inp-kd" type="text" inputmode="decimal" value="0,018510" required />
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="btn-cancel-pid" class="btn btn-outline">Fechar</button>
+            <button type="submit" class="btn btn-apply">Aplicar Kp, Ki, Kd</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL: CONSOLE SERIAL & LOG.TXT -->
+    <div id="console-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="console-modal-title">
+      <div class="modal-card modal-wide">
+        <div class="modal-header">
+          <h3 id="console-modal-title">Console Serial &amp; Eventos (LOG.TXT)</h3>
+          <button type="button" id="btn-close-console-modal" class="modal-close" aria-label="Fechar">✕</button>
+        </div>
+        <pre id="console-output" class="console-pre"></pre>
+        <div class="modal-footer">
+          <span id="corrupt-counter" class="muted-note">0 linhas descartadas</span>
+          <button type="button" id="btn-copy-console" class="btn btn-outline">Copiar</button>
+          <button type="button" id="btn-clear-console" class="btn btn-outline">Limpar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TOAST DE FEEDBACK RÁPIDO -->
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

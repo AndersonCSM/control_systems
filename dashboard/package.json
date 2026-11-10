@@ -1,0 +1,68 @@
+{
+  "name": "pendulo-pid-dashboard",
+  "productName": "Pendulo PID Dashboard",
+  "desktopName": "pendulo-pid-dashboard.desktop",
+  "description": "Dashboard em tempo real para resposta no tempo e sintonia PID do pendulo invertido (ESP32)",
+  "author": "Controle e Automacao",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "electron:start": "npm run build && electron .",
+    "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "dist:win": "npm run build && electron-builder --win portable",
+    "dist:all": "npm run build && electron-builder --linux AppImage --win portable"
+  },
+  "build": {
+    "appId": "br.eng.pendulo.pid.dashboard",
+    "productName": "Pendulo PID Dashboard",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Science",
+      "syncDesktopName": true,
+      "icon": "build/icon.png",
+      "artifactName": "Pendulo-PID-Dashboard-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Pendulo-PID-Dashboard-${version}-win-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "uplot": "^1.6.31"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^41.2.1",
+    "electron-builder": "^26.8.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}

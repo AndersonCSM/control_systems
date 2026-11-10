@@ -1,0 +1,65 @@
+# ==============================================================================
+# Gitignore para Projeto ESP32 PID (Firmware + Python + Dashboard Electron/Vite)
+# ==============================================================================
+
+# --- Dashboard (Node / Vite / Electron) ---
+node_modules/
+dist/
+release/
+.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# O diretório dashboard/build contém o ícone da aplicação (dashboard/build/icon.png)
+# Mantemos explicitamente versionado.
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+.pytest_cache/
+
+# --- Logs e Capturas de Telemetria ---
+*.log
+log.txt
+# Descomente se salvar dados experimentais locais em CSV:
+# *.csv
+
+# --- Embedded / ESP32 / Arduino / PlatformIO ---
+*.hex
+*.bin
+*.elf
+*.eep
+*.o
+*.a
+*.d
+/build/
+.pio/
+.pioenvs/
+.piolibdeps/
+sdkconfig.old
+
+# --- Variáveis de Ambiente e Segredos ---
+.env
+.env.local
+.env.*.local
+
+# --- IDEs e Sistema Operacional ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.code-workspace
