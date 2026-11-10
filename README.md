@@ -8,16 +8,17 @@ This repository presents the complete mathematical modeling, Root-Locus (LGR) PI
 
 To overcome the practical challenges of stepper-driven inverted pendulums—such as electromagnetic interference (EMI) on encoder lines, derivative quantization spikes at $1\text{ kHz}$ sampling, and non-minimum phase arm drift—the firmware implements:
 1. **A deterministic $20\text{ kHz}$ ($50\text{ }\mu\text{s}$) Hardware Timer ISR in `IRAM`** that simultaneously samples the quadrature encoder via direct register reads (`GPIO.in1.val`) with a state-transition lookup table (eliminating GPIO interrupt floods), synthesizes jitter-free `STEP` pulses via a 32-bit Direct Digital Synthesis (DDS) phase accumulator (`REG_WRITE`), and clocks the discrete PID control loop at an exact $1\text{ kHz}$ ($\Delta t = 1\text{ ms}$) rate.
-2. **Two progressive firmware versions** for academic and practical comparison:
+2. **Three progressive firmware versions** for academic and practical comparison:
    - [`firmware/simples/`](firmware/simples/): Direct implementation of the theoretical Root-Locus PID ($UP = 5\%$, $T_s = 0.5\text{ s}$) and linearized plant transfer function $G(s) = \frac{1398.89}{s^2 - 33.8276}$.
-   - [`firmware/melhorado/`](firmware/melhorado/): Bench-validated final controller incorporating a $15\text{ Hz}$ first-order low-pass derivative filter (attenuating $0.15^\circ$ quantization noise without compromising phase margin), a leaky integrator ($\text{leak}_i = 0.995$) for smooth manual swing-up capture, and soft arm position/velocity feedback to keep the motor centered around $0^\circ$.
+   - [`firmware/melhorado/`](firmware/melhorado/): Bench-validated baseline controller incorporating a $15\text{ Hz}$ first-order low-pass derivative filter, leaky integrator ($\text{leak}_i = 0.995$), and soft arm feedback.
+   - [`firmware/melhorado2/`](firmware/melhorado2/): Advanced anti-windup controller with stable deadband ($|e| \le 0.3^\circ$) to eliminate continuous tremor, manual swing-up reset ($|e| > 5^\circ$), and pure integration for persistent disturbance rejection.
 
 ---
 
 ## Estrutura do Repositório
 
 ```text
-repositorio/
+control_systems/
 ├── README.md                          # Visão geral do projeto (PT-BR / EN), hardware e pinagem
 ├── docs/
 │   ├── projeto.md                     # Memorial de cálculo completo em LaTeX (Modelagem, LGR e Ganhos)
@@ -26,12 +27,16 @@ repositorio/
 │   ├── img/                           # Figuras e gráficos de simulação
 │   └── datasheets/                    # Datasheets do motor NEMA 14, driver A4988 e encoder incremental
 └── firmware/
-    ├── simples/                       # Versão 1: Implementação direta da teoria pura (PID + FT pura)
+    ├── simples/                       # Versão 1: Teoria pura (PID + FT pura)
     │   ├── simples.ino
     │   ├── pid.h
     │   └── pid.c
-    └── melhorado/                     # Versão 2 (Final): Com filtro derivativo (15 Hz), limite 4 kHz e controle do braço
-        ├── melhorado.ino
+    ├── melhorado/                     # Versão 2: Filtro derivativo (15 Hz), limite 4 kHz e controle do braço
+    │   ├── melhorado.ino
+    │   ├── pid.h
+    │   └── pid.c
+    └── melhorado2/                    # Versão 3: Anti-windup com zona morta (elimina trepidação) e rejeição de distúrbios
+        ├── melhorado2.ino
         ├── pid.h
         └── pid.c
 ```

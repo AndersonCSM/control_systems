@@ -1,9 +1,9 @@
 # Documentação de Arquitetura e Análise de Código — `firmware/melhorado`
 
 Este documento detalha a arquitetura de tempo real, as otimizações de baixo nível para o microcontrolador **ESP32** e a implementação matemática do controlador PID projetado via Lugar Geométrico das Raízes (LGR) nos arquivos:
-- [`melhorado.ino`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino) — Firmware principal, ISR de $20\text{ kHz}$, acionamento DDS do motor de passo e malha de $1\text{ kHz}$.
-- [`pid.h`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.h) — Estrutura de dados `PID_t` e constantes do controlador ($f_c = 15\text{ Hz}$).
-- [`pid.c`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c) — Implementação discreta do PID com filtro derivativo de 1ª ordem e limitação do torque máximo do motor ($\pm 0,14\text{ N}\cdot\text{m}$).
+- [`melhorado.ino`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino) — Firmware principal, ISR de $20\text{ kHz}$, acionamento DDS do motor de passo e malha de $1\text{ kHz}$.
+- [`pid.h`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.h) — Estrutura de dados `PID_t` e constantes do controlador ($f_c = 15\text{ Hz}$).
+- [`pid.c`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c) — Implementação discreta do PID com filtro derivativo de 1ª ordem e limitação do torque máximo do motor ($\pm 0,14\text{ N}\cdot\text{m}$).
 
 ---
 
@@ -11,7 +11,7 @@ Este documento detalha a arquitetura de tempo real, as otimizações de baixo n�
 
 O ESP32 possui dois núcleos Xtensa LX6 de 32 bits a $240\text{ MHz}$ com unidade de ponto flutuante (FPU) em hardware. No ambiente Arduino/FreeRTOS do ESP32:
 - **Core 0 (`PRO_CPU`):** Executa as tarefas de sistema, *watchdog timers* e pilha de segundo plano do FreeRTOS.
-- **Core 1 (`APP_CPU`):** Executa exclusivamente o `setup()`, o `loop()` (onde roda a malha do PID a $1\text{ kHz}$) e a rotina de interrupção de hardware [`onTimer20kHz()`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L89-L132), garantindo que tarefas de sistema no Core 0 não interrompam o controle.
+- **Core 1 (`APP_CPU`):** Executa exclusivamente o `setup()`, o `loop()` (onde roda a malha do PID a $1\text{ kHz}$) e a rotina de interrupção de hardware [`onTimer20kHz()`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L89-L132), garantindo que tarefas de sistema no Core 0 não interrompam o controle.
 
 Além disso, o código é dividido em **três níveis temporais estritos**:
 
@@ -37,18 +37,18 @@ flowchart TD
 
 ---
 
-## 2. Análise Detalhada da ISR de $20\text{ kHz}$ e Seus Parâmetros ([`onTimer20kHz`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L46-L132))
+## 2. Análise Detalhada da ISR de $20\text{ kHz}$ e Seus Parâmetros ([`onTimer20kHz`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L46-L132))
 
 ### 2.1 Por que a ISR em Registradores Diretos é Indispensável?
 No `loop()`, o comando `Serial.printf(...)` leva de $3\text{ a }5\text{ ms}$ para transmitir os dados pela porta USB. Se a leitura do encoder ou a geração dos pulsos `STEP` ficassem no `loop()`, o motor sofreria engasgos a cada impressão Serial e o encoder perderia pulsos.
 
 Mais ainda: no ESP32, as funções convencionais `digitalRead()` e `digitalWrite()` consultam tabelas de pinos armazenadas na **memória Flash SPI externa**. Chamar `digitalRead()`/`digitalWrite()` a $20\text{ kHz}$ ($60.000$ a $80.000$ acessos/s) gera disputas de barramento com a Flash (*cache misses*) e atrasos (*jitter*) que impedem o equilíbrio do pêndulo na bancada. Por isso, toda a ISR utiliza acesso direto a registradores em memória `IRAM`:
 
-1. **`IRAM_ATTR` e `DRAM_ATTR` ([linhas 69-89](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L69-L89)):**
+1. **`IRAM_ATTR` e `DRAM_ATTR` ([linhas 69-89](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L69-L89)):**
    - Alocam o código de `onTimer20kHz()`, `ler_ab_fast()` e a tabela `QUAD_TABLE[16]` diretamente na memória RAM interna rápida do ESP32, garantindo execução em menos de $1\text{ }\mu\text{s}$ sem nunca acessar a Flash.
-2. **`ler_ab_fast()` via `GPIO.in1.val` ([linhas 77-82](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L77-L82)):**
+2. **`ler_ab_fast()` via `GPIO.in1.val` ([linhas 77-82](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L77-L82)):**
    - No ESP32, os pinos `0` a `31` ficam no registrador `GPIO.in` e os pinos `32` a `39` ficam no registrador `GPIO.in1.val`. Como o encoder está nos pinos `32` (`PIN_ENC_A`) e `33` (`PIN_ENC_B`), `GPIO.in1.val` lê os dois canais simultaneamente em uma única instrução de clock.
-3. **`REG_WRITE(GPIO_OUT_W1TS_REG / W1TC_REG, MASK)` ([linhas 65-66, 105, 116, 127](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L65-L66)):**
+3. **`REG_WRITE(GPIO_OUT_W1TS_REG / W1TC_REG, MASK)` ([linhas 65-66, 105, 116, 127](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L65-L66)):**
    - `STEP_MASK = (1UL << 25)` e `DIR_MASK = (1UL << 26)` identificam os bits dos pinos `25` e `26`.
    - Escrever no registrador `GPIO_OUT_W1TS_REG` (*Write 1 To Set*) coloca o pino em `HIGH` em 1 ciclo de clock ($\sim 4\text{ ns}$).
    - Escrever no registrador `GPIO_OUT_W1TC_REG` (*Write 1 To Clear*) coloca o pino em `LOW` em 1 ciclo de clock.
@@ -79,7 +79,7 @@ Mais ainda: no ESP32, as funções convencionais `digitalRead()` e `digitalWrite
 
 Em projetos que utilizam `attachInterrupt()` nos pinos do encoder, o ruído eletromagnético (EMI) gerado pelo chaveamento de corrente do driver `A4988` dispara dezenas de milhares de interrupções falsas por segundo, travando a CPU e a porta Serial.
 
-No [`melhorado.ino`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L91-L93), o encoder de $600\text{ PPR}$ ($2400\text{ CPR}$ em quadratura $4\times$, resolução de $0,15^\circ/\text{pulso}$) é amostrado sincronicamente a **$20\text{ kHz}$** (a cada $50\text{ }\mu\text{s}$):
+No [`melhorado.ino`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L91-L93), o encoder de $600\text{ PPR}$ ($2400\text{ CPR}$ em quadratura $4\times$, resolução de $0,15^\circ/\text{pulso}$) é amostrado sincronicamente a **$20\text{ kHz}$** (a cada $50\text{ }\mu\text{s}$):
 
 ```cpp
 uint8_t ab = ler_ab_fast();                    // Lê os 2 bits atuais: (AB)
@@ -129,9 +129,9 @@ Dessa forma, em vez de dezenas de comandos `if/else`, o microcontrolador decodif
 
 ---
 
-## 4. Biblioteca do Controlador PID ([`pid.h`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.h) e [`pid.c`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c))
+## 4. Biblioteca do Controlador PID ([`pid.h`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.h) e [`pid.c`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c))
 
-### 4.1 Inicialização Direta pelos Parâmetros do LGR ([`PID_InitKz`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c#L21-L29))
+### 4.1 Inicialização Direta pelos Parâmetros do LGR ([`PID_InitKz`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c#L21-L29))
 O controlador foi projetado via Lugar Geométrico das Raízes com dois zeros reais iguais em $s = -z$:
 $$G_c(s) = \frac{K(s + z)^2}{s} = 2Kz + \frac{Kz^2}{s} + K s = K_p + \frac{K_i}{s} + K_d s$$
 Com `K_LGR = 0.015601` e `Z_LGR = 5.9888` ($\Delta t = 0,001\text{ s}$), a função `PID_InitKz()` calcula automaticamente:
@@ -154,7 +154,7 @@ Como a malha do PID roda a **$1\text{ kHz}$** ($\Delta t = 0,001\text{ s}$), qua
 Sem filtragem, a ação derivativa ($K_d \cdot \dot{e}$) injeta esses espigões de alta frequência diretamente no torque comandado, fazendo o motor de passo vibrar, aquecer e perder passos no topo.
 
 #### B. Implementação Matemática (Filtro IIR Passa-Baixas de 1ª Ordem)
-Em vez de aplicar o ganho $K_d$ sobre `deriv_bruta`, o código em [`pid.c` (linhas 47-50)](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c#L47-L50) passa a derivada por um filtro exponencial de 1ª ordem:
+Em vez de aplicar o ganho $K_d$ sobre `deriv_bruta`, o código em [`pid.c` (linhas 47-50)](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c#L47-L50) passa a derivada por um filtro exponencial de 1ª ordem:
 
 ```c
 float deriv_bruta = (e - pid->erro_anterior) / pid->dt;
@@ -164,7 +164,7 @@ pid->deriv_filtrada += pid->alpha_d * (deriv_bruta - pid->deriv_filtrada);
 Na forma de equação a diferenças:
 $$\dot{e}_{\text{filt}}[k] = (1 - \alpha_d)\cdot \dot{e}_{\text{filt}}[k-1] + \alpha_d \cdot \left(\frac{e[k] - e[k-1]}{\Delta t}\right)$$
 
-Onde o coeficiente $\alpha_d$ é calculado por casamento de polo em [`pid.c` (linha 15)](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c#L15) para $f_c = 15,0\text{ Hz}$:
+Onde o coeficiente $\alpha_d$ é calculado por casamento de polo em [`pid.c` (linha 15)](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c#L15) para $f_c = 15,0\text{ Hz}$:
 $$\alpha_d = 1 - e^{-2\pi f_c \Delta t} = 1 - e^{-2\pi \cdot 15 \cdot 0,001} \approx \mathbf{0,0899}$$
 
 Na prática, quando ocorre um salto de $1$ pulso no encoder, o filtro absorve apenas $\approx 9\%$ desse pico no primeiro milissegundo e distribui o restante suavemente pelas amostras seguintes, reconstruindo a velocidade angular real da haste.
@@ -183,7 +183,7 @@ Com o corte ajustado em **$f_c = 15\text{ Hz}$**:
 
 ### 4.3 Termo Integral (`I`), Estratégia de Esquecimento (`leak_i`) e Limitação do Torque ($\pm 0,14\text{ N}\cdot\text{m}$)
 
-Nas [linhas 53-68 de `pid.c`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/pid.c#L53-L68):
+Nas [linhas 53-68 de `pid.c`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/pid.c#L53-L68):
 
 ```c
 float i_novo = (pid->integral * pid->leak_i) + e * pid->dt;
@@ -222,7 +222,7 @@ O motor de passo NEMA 14 suporta no máximo **`limite_torque = 0.14` $\text{N}\c
 
 ## 5. Malha de Controle Composta e Conversão Física para o Motor de Passo
 
-A cada $1\text{ ms}$ (`if (flag_1khz)` nas [linhas 231-281 de `melhorado.ino`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L231-L281)):
+A cada $1\text{ ms}$ (`if (flag_1khz)` nas [linhas 231-281 de `melhorado.ino`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L231-L281)):
 
 1. **Janela de Captura e Proteção do Cabo:**
    - O motor só é acionado quando a haste está a $\pm 30^\circ$ do topo (`150° <= ang <= 210°`) e o braço não excedeu $\pm 130^\circ$ (`LIMITE_BRACO_DEG`).
@@ -242,9 +242,51 @@ A cada $1\text{ ms}$ (`if (flag_1khz)` nas [linhas 231-281 de `melhorado.ino`](f
      - Para voltar ao centro, é preciso primeiro dar um leve avanço com a mão **a favor do deslocamento (para a direita, `+`)**, inclinando a vassoura sutilmente para a esquerda; em seguida, o próprio controlador principal (`tau_pid`), ao reagir para segurar essa inclinação da haste, conduz todo o conjunto (haste + braço) de volta para a esquerda até `braco_rad = 0°`.
      - Matematicamente, pelo critério de Routh-Hurwitz aplicado a uma planta com polo instável no semiplano direito, o ganho de realimentação da base precisa ter esse sinal para que todos os coeficientes do polinômio característico de malha fechada permaneçam positivos e estáveis.
 
-3. **Conversão Física Torque $\to$ Frequência de Passos ([`aplicar_torque_motor`](file:///home/anderson/github_projects/temp/controle2/repositorio/firmware/melhorado/melhorado.ino#L153-L175)):**
+3. **Conversão Física Torque $\to$ Frequência de Passos ([`aplicar_torque_motor`](file:///home/anderson/github_projects/control_systems/firmware/melhorado/melhorado.ino#L153-L175)):**
    - A partir do torque limitado $\tau \in [-0,14;\; +0,14]\text{ N}\cdot\text{m}$, calcula-se a aceleração angular física:
      $$\alpha_{\text{cmd}} = \frac{\tau}{J}, \quad \text{com } J = m l^2 = 0,00071485\text{ kg}\cdot\text{m}^2$$
    - Integra-se a aceleração no tempo ($\Delta t = 1\text{ ms}$) para obter a velocidade angular comandada $\omega_{\text{cmd}}$ e converte-se para frequência de microsteps ($3200\text{ passos/volta}$):
      $$\omega_{\text{cmd}}[k] = \omega_{\text{cmd}}[k-1] + \alpha_{\text{cmd}}\cdot \Delta t \implies f_{\text{step}} = \omega_{\text{cmd}}[k] \cdot \frac{3200}{2\pi}\text{ Hz}$$
    - Por fim, aplica-se o limite máximo validado em bancada (**`FREQ_MAX_HZ = 4000.0f`**) tanto em `freq_signed` quanto na variável de estado `vel_cmd_rad_s` (evitando perda de sincronismo do motor NEMA 14).
+
+---
+
+## 6. Evolução para o Controlador Avançado — `firmware/melhorado2`
+
+O firmware [`firmware/melhorado2/`](file:///home/anderson/github_projects/control_systems/firmware/melhorado2/) foi desenvolvido para atender às recomendações de aprimoramento prático e acadêmico da bancada:
+1. **Eliminação da trepidação contínua (*limit cycle*) no ponto de equilíbrio.**
+2. **Eliminação do fator de vazamento (`leak_i`) na faixa de controle ativo**, restaurando a integração pura para anular o erro em regime permanente sob atrito ou perturbação constante.
+3. **Anti-windup seletivo para subida manual (*manual swing-up*).**
+
+### 6.1 Lógica do Integrador Inteligente em 3 Zonas ([`firmware/melhorado2/pid.c`](file:///home/anderson/github_projects/control_systems/firmware/melhorado2/pid.c#L51-L83))
+
+```c
+float abs_erro_graus = fabsf(erro_graus);
+float i_novo = pid->integral;
+
+if (abs_erro_graus > 5.0f) {
+    i_novo = 0.0f;                        /* Zona 1: Anti-windup de subida manual */
+} else if (abs_erro_graus > 0.30f) {
+    i_novo = pid->integral + e * pid->dt; /* Zona 2: Integração pura para distúrbios */
+}
+/* Zona 3: Se abs_erro_graus <= 0.30f, i_novo = pid->integral (Deadband de congelamento) */
+```
+
+| Zona de Operação | Faixa de Erro $|e|$ | Comportamento do Integrador | Justificativa Física |
+| :--- | :--- | :--- | :--- |
+| **Zona 1: Subida Manual** | $|e| > 5,0^\circ$ | **Zera (`i_novo = 0`)** | Durante o levantamento manual ($150^\circ \to 175^\circ$), o erro acumulado geraria um pulso de torque excessivo que arremessaria a haste ao chegar no topo. |
+| **Zona 2: Rejeição de Perturbação** | $0,30^\circ < |e| \le 5,0^\circ$ | **Integração Pura ($+e \cdot \Delta t$)** | Sem atenuação exponencial (`leak_i`), o integrador acumula exatamente a força necessária para rejeitar forças externas, assimetria de massa ou desnível de bancada. |
+| **Zona 3: Zona Morta de Estabilidade** | $|e| \le 0,30^\circ$ ($\approx \pm 2$ pulsos) | **Congela (`i_novo = integral`)** | No topo perfeitamente equilibrado, a quantização de $0,15^\circ$ faz a leitura alternar $\pm 1$ pulso. Congelar o integrador cessa a caça ao ruído de quantização, eliminando o tremor no motor. |
+
+### 6.2 Quadro Comparativo entre as Três Versões de Firmware
+
+| Característica | `firmware/simples/` | `firmware/melhorado/` | `firmware/melhorado2/` |
+| :--- | :--- | :--- | :--- |
+| **Base Matemática** | Planta Linearizada Pura | LGR com Filtro Derivativo | LGR + Filtro + Integrador 3 Zonas |
+| **Filtro Derivativo** | Não (derivada bruta) | Passa-baixas $15\text{ Hz}$ ($\alpha = 0,0899$) | Passa-baixas $15\text{ Hz}$ ($\alpha = 0,0899$) |
+| **Ação Integral** | Pura ($e \cdot \Delta t$) | Vazamento contínuo ($\text{leak}_i = 0,995$) | 3 Zonas (Reset / Pura / Congelada) |
+| **Trepidação no Topo** | Alta (amplificação de ruído) | Média (amortecida pelo leak) | **Nula** (eliminada pela zona morta) |
+| **Subida Manual** | Sofre solavanco no topo | Suave (memória esvazia em 200 ms) | **Perfeita** (integral resetada fora de $\pm 5^\circ$) |
+| **Rejeição de Desnível** | Boa (mas ruidosa) | Parcial (leak atenua torque contínuo) | **Excelente** (integração pura sem leak) |
+| **Controle de Centro do Braço** | Não | Sim ($K_{\text{pos}}, K_{\text{vel}}$) | Sim ($K_{\text{pos}}, K_{\text{vel}}$) |
+| **Limite Máximo de Frequência** | $4000\text{ Hz}$ | $4000\text{ Hz}$ | $4000\text{ Hz}$ |
