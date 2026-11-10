@@ -143,4 +143,28 @@ describe('PendulumSimulator closed-loop physics', () => {
     expect(Math.abs(180 - lastSample!.angDeg)).toBeLessThan(1.5);
     expect(lastReport?.state).toBe('ESTAVEL');
   });
+
+  it('stabilizes around 180 deg in simples firmware mode without arm feedback', () => {
+    const lines: string[] = [];
+    const sim = new PendulumSimulator((line) => lines.push(line));
+    sim.setFirmwareMode('simples');
+    const det = new StabilityDetector();
+
+    sim.advanceMs(3500); // 3.5 segundos simulados a 1 kHz
+
+    let lastReport = null;
+    let lastSample = null;
+    for (const line of lines) {
+      const parsed = parseLine(line);
+      if (parsed?.type === 'T') {
+        lastSample = parsed.sample;
+        lastReport = det.update(parsed.sample);
+      }
+    }
+
+    expect(lastSample).not.toBeNull();
+    expect(lastSample!.ctrl).toBe(true);
+    expect(Math.abs(180 - lastSample!.angDeg)).toBeLessThan(2.0);
+    expect(lastReport?.state).toBe('ESTAVEL');
+  });
 });
