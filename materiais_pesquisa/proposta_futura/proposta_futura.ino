@@ -12,7 +12,8 @@
 #define DT               0.001f    // 1 ms → 1 kHz
 #define TORQUE_MAX_NM    0.14f     // Torque máximo via A4988 (bipolar)
 #define SETPOINT_GRAUS   180.0f    // Topo = 180° (haste para baixo no boot = 0°)
-#define ZONA_ATIVA_GRAUS 30.0f     // Aciona o motor quando a haste estiver a ±30° do topo (150° a 210°)
+#define ZONA_ENGATE_GRAUS 15.0f    // engata só quando a haste está a ±15° do topo (165° a 195°)
+#define ZONA_SOLTA_GRAUS  40.0f    // desarma se a haste passar de ±40° do topo (140° a 220°)
 
 /* Parâmetros físicos para conversão Torque -> Aceleração -> Freq STEP */
 #define M_MASSA          0.0085f   // 8.5 g -> kg
@@ -23,7 +24,16 @@
 /* Realimentação suave do braço do motor */
 #define K_POS_BRACO      0.0025f   // N.m/rad de retorno suave para o centro do braço
 #define K_VEL_BRACO      0.0012f   // N.m/(rad/s) de amortecimento da velocidade do braço
-#define LIMITE_BRACO_DEG 130.0f    // Desarma por segurança se o braço girar mais de ±130° (protege o cabo)
+#define K_I_BRACO        0.0001f   // NOVO: N.m/rad.s - integral LENTO do braço (elimina deriva)
+#define LIMITE_BRACO_DEG 250.0f    // Desarma por segurança se o braço girar mais de ±130° (protege o cabo)
+#define REF_MAX_DEG       90.0f    // Limite da referência do braço (±90°)
+#define REF_RAMP_DEG_S    30.0f    // Velocidade da rampa da referência (30°/s)
+
+/* Mola de cabo não linear: só atua quando |braco_erro| > CABO_LIMIAR_DEG.
+ * CABO_K é ~60x maior que K_POS_BRACO, o suficiente para vencer TORQUE_MAX_NM
+ * em ~150° de erro (ver cálculo no comentário abaixo). */
+#define CABO_LIMIAR_DEG   90.0f    // a partir daqui, a mola de cabo age
+#define CABO_K            0.15f    // N.m/rad — mola de cabo (60x K_POS_BRACO)
 
 /* ============================================================
  * PINAGEM ESP32 (DevKit 30 pinos)
@@ -82,6 +92,9 @@ static bool      s_pending     = false; // Guarda pedido de pulso STEP caso o tr
 static int8_t    s_dir_cur     = 1;     // Sentido atual do motor (+1 ou -1) para detectar inversão do pino DIR
 static float     vel_cmd_rad_s = 0.0f;  // Velocidade angular do motor (rad/s) obtida integrando a aceleração (tau/J)
 static long      step_zero     = 0;     // Posição de referência (0°) do braço salva quando o controle arma no topo
+static float     integral_braco = 0.0f; // NOVO: integrador do braço (centragem lenta / anti-deriva)
+static float     alpha_ref_rad    = 0.0f;  // Referência atual do braço (segue o alvo por rampa)
+static float     alpha_ref_target = 0.0f;  // Alvo da referência do braço (comando 'r' atualiza este)
 
 /* ISR de 20 kHz (a cada 50 us):
  * 1) Amostra o encoder em quadratura com filtro natural de 50 us (nunca trava a Serial por ruído)
@@ -181,9 +194,11 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     Serial.println("==================================================");
-    Serial.println("BOOT OK - Controle 2 FINAL SLIM (Deriv=15Hz | FreqMax=4000Hz)");
+    Serial.println("BOOT OK - MELHORADO 4 (versao estavel original)");
     Serial.printf("PINOS -> STEP:%d DIR:%d EN:%d ENC_A:%d ENC_B:%d\n",
                   PIN_STEP, PIN_DIR, PIN_EN, PIN_ENC_A, PIN_ENC_B);
+    Serial.printf("Braco: K_POS=%.5f  K_VEL=%.5f  K_I=%.5f\n",
+                  K_POS_BRACO, K_VEL_BRACO, K_I_BRACO);
     Serial.println("Comando no Monitor Serial (115200 baud):");
     Serial.println("  'c' -> Zerar angulo de referencia com haste embaixo (0.00°)");
     Serial.println("==================================================");
@@ -223,10 +238,25 @@ void loop() {
     // Interface Serial única: 'c' para zerar o ângulo de referência (0.00°)
     while (Serial.available() > 0) {
         char ch = (char)Serial.read();
-        if (ch == 'c' || ch == 'C') {
-            encoder_count = 0;
-            step_zero     = g_step_pos;
+                if (ch == 'c' || ch == 'C') {
+            encoder_count    = 0;
+            step_zero        = g_step_pos;
+            alpha_ref_rad    = 0.0f;   // zera a referência atual
+            alpha_ref_target = 0.0f;   // zera o ALVO também (senão a rampa puxa de volta)
+            integral_braco   = 0.0f;
             Serial.println("\n>>> [MANUAL] Angulo de referencia zerado na posicao atual (0.00 graus)!\n");
+        }
+        else if (ch == 'r' || ch == 'R') {
+            // NOVO: comando 'r<graus>' — muda o ALVO; a rampa em loop() move alpha_ref_rad suavemente
+            unsigned long old_to = Serial.getTimeout();
+            Serial.setTimeout(100);
+            float deg = Serial.parseFloat();
+            Serial.setTimeout(old_to);
+            deg = constrain(deg, -REF_MAX_DEG, REF_MAX_DEG);
+            alpha_ref_target = deg * DEG2RAD;   // ← ALVO (não alpha_ref_rad)
+            integral_braco = 0.0f;
+            Serial.printf(">>> Referencia do braco: alvo = %.1f graus (rampa %.0f graus/s)\n",
+                          deg, REF_RAMP_DEG_S);
         }
     }
 
@@ -241,8 +271,13 @@ void loop() {
 
         // 2) Verifica se a haste está na zona de equilíbrio no topo (180° ± 30°)
         //    e se o braço não ultrapassou o limite de segurança do cabo (±130°)
-        bool dentro_topo = (fabsf(SETPOINT_GRAUS - ang) <= ZONA_ATIVA_GRAUS);
-        bool cabo_seguro = (fabsf(braco_deg) <= LIMITE_BRACO_DEG);
+                float zona_atual = controle_ativo ? ZONA_SOLTA_GRAUS : ZONA_ENGATE_GRAUS;
+        bool dentro_topo = (fabsf(SETPOINT_GRAUS - ang) <= zona_atual);
+
+        // Rede de segurança: desarma só se a mola de cabo não conseguiu conter
+        float braco_erro_seg = controle_ativo ? (braco_rad - alpha_ref_rad) : 0.0f;
+        bool erro_seguro = (fabsf(braco_erro_seg) <= 180.0f * DEG2RAD);
+        bool cabo_seguro = (fabsf(braco_deg) <= LIMITE_BRACO_DEG) && erro_seguro;
 
         if (dentro_topo && cabo_seguro) {
             if (!controle_ativo) {
@@ -250,14 +285,42 @@ void loop() {
                 PID_Reset(&pid);
                 pid.erro_anterior = (SETPOINT_GRAUS - ang) * DEG2RAD;
                 vel_cmd_rad_s     = 0.0f;
-                step_zero         = g_step_pos;
+                integral_braco    = 0.0f;
+                // step_zero         = g_step_pos; permanece o mesmo do último 'c' (referência fixa)
                 controle_ativo    = true;
             }
 
-            // 3) Equação de controle (haste + centralização do braço)
+            // 3) Equação de controle (haste com PID melhorado + centralização do braço)
             float tau_pid   = PID_Calcular(&pid, SETPOINT_GRAUS, ang);
-            float tau_braco = -K_POS_BRACO * braco_rad - K_VEL_BRACO * vel_cmd_rad_s;
-            tau = -(tau_pid + tau_braco);
+
+            float ramp_step = REF_RAMP_DEG_S * DEG2RAD * DT;
+            float dr_ref    = alpha_ref_target - alpha_ref_rad;
+            alpha_ref_rad  += constrain(dr_ref, -ramp_step, ramp_step);
+
+                        // NOVO: erro do braço em relação à referência (não mais em relação a step_zero)
+            float braco_erro = braco_rad - alpha_ref_rad;
+
+                        integral_braco += braco_erro * DT;
+            if (integral_braco >  1.0f) integral_braco =  1.0f;
+            if (integral_braco < -1.0f) integral_braco = -1.0f;
+
+            /* Mola normal do braço (fraca: permite o pêndulo mover o braço) */
+            float tau_braco = -K_POS_BRACO * braco_erro
+                              - K_VEL_BRACO * vel_cmd_rad_s
+                              - K_I_BRACO   * integral_braco;
+
+            /* Mola de cabo (forte, só fora de CABO_LIMIAR_DEG):
+             * garante que o braço NÃO passe de ~150° de erro mesmo com
+             * tau_pid saturado em TORQUE_MAX_NM.
+             * Em |braco_erro| = 150° (2.62 rad): excesso = 1.05 rad,
+             * tau_cabo = 0.15 * 1.05 = 0.157 N.m > 0.14 N.m (vence). */
+            if (fabsf(braco_erro) > CABO_LIMIAR_DEG * DEG2RAD) {
+                float excesso = fabsf(braco_erro) - CABO_LIMIAR_DEG * DEG2RAD;
+                float sinal   = (braco_erro > 0.0f) ? -1.0f : 1.0f;  // empurra de volta
+                tau_braco += sinal * CABO_K * excesso;
+            }
+
+            tau = -tau_pid + tau_braco;
 
             // 4) Aplica no gerador de passos DDS de 20 kHz
             aplicar_torque_motor(tau);
@@ -266,6 +329,7 @@ void loop() {
             if (controle_ativo) {
                 controle_ativo = false;
                 vel_cmd_rad_s  = 0.0f;
+                integral_braco = 0.0f;
                 g_rate_half    = 0;
                 PID_Reset(&pid);
             }
@@ -276,9 +340,9 @@ void loop() {
         if (millis() - last_log >= 100) {
             last_log = millis();
             float freq_step = vel_cmd_rad_s * (PASSOS_POR_VOLTA / (2.0f * PI_F));
-            Serial.printf("ctrl=%s | pulsos=%6ld | ang=%6.2f° | braco=%+6.1f° | tau=%+6.4f N.m | step=%+7.1f Hz\n",
+            Serial.printf("ctrl=%s | pulsos=%6ld | ang=%6.2f° | braco=%+6.1f° | Ibr=%+6.3f | tau=%+6.4f N.m | step=%+7.1f Hz\n",
                           controle_ativo ? "ON " : "OFF",
-                          encoder_count, ang, braco_deg, tau, freq_step);
+                          encoder_count, ang, braco_deg, integral_braco, tau, freq_step);
         }
     }
 }

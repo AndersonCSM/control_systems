@@ -1,6 +1,14 @@
 # Projeto do Controlador PID via Lugar Geométrico das Raízes (LGR) — Pêndulo Invertido
 
-Este documento apresenta o memorial de cálculo completo do projeto de controle para estabilização do pêndulo invertido na posição vertical superior ($180^\circ$), partindo da modelagem física da planta até a obtenção analítica dos parâmetros $(K, z)$ pelo Lugar Geométrico das Raízes (LGR) e sua conversão para os ganhos $(K_p, K_i, K_d)$ implementados no firmware [`esp32_pid_final`](file:///home/anderson/github_projects/temp/controle2/embedded/esp32_pid_final/pid.h).
+Este documento apresenta o memorial de cálculo completo do projeto de controle para estabilização do pêndulo invertido na posição vertical superior ($180^\circ$), partindo da modelagem física da planta até a obtenção analítica dos parâmetros $(K, z)$ pelo Lugar Geométrico das Raízes (LGR) e sua conversão para os ganhos $(K_p, K_i, K_d)$ implementados no firmware de produção [`firmware/final/pid.h`](file:///home/anderson/github_projects/control_systems/firmware/final/pid.h).
+
+---
+
+## Bancada Experimental Física
+
+| Haste Equilibrada a $180^\circ$ | Bancada Experimental Completa | Eletrônica (ESP32 DevKit + Driver A4988) |
+| :---: | :---: | :---: |
+| ![Pêndulo Equilibrado](img/pendulo_equilibrado.jpeg) | ![Bancada Experimental](img/bancada.jpeg) | ![ESP32 e Shield](img/esp32_shield.jpeg) |
 
 ---
 

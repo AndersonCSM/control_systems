@@ -23,6 +23,7 @@
 /* Realimentação suave do braço do motor */
 #define K_POS_BRACO      0.0025f   // N.m/rad de retorno suave para o centro do braço
 #define K_VEL_BRACO      0.0012f   // N.m/(rad/s) de amortecimento da velocidade do braço
+#define K_I_BRACO        0.0001f   // NOVO: N.m/rad.s - integral LENTO do braço (elimina deriva)
 #define LIMITE_BRACO_DEG 130.0f    // Desarma por segurança se o braço girar mais de ±130° (protege o cabo)
 
 /* ============================================================
@@ -82,6 +83,7 @@ static bool      s_pending     = false; // Guarda pedido de pulso STEP caso o tr
 static int8_t    s_dir_cur     = 1;     // Sentido atual do motor (+1 ou -1) para detectar inversão do pino DIR
 static float     vel_cmd_rad_s = 0.0f;  // Velocidade angular do motor (rad/s) obtida integrando a aceleração (tau/J)
 static long      step_zero     = 0;     // Posição de referência (0°) do braço salva quando o controle arma no topo
+static float     integral_braco = 0.0f; // NOVO: integrador do braço (centragem lenta / anti-deriva)
 
 /* ISR de 20 kHz (a cada 50 us):
  * 1) Amostra o encoder em quadratura com filtro natural de 50 us (nunca trava a Serial por ruído)
@@ -181,9 +183,11 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     Serial.println("==================================================");
-    Serial.println("BOOT OK - Controle 2 MELHORADO 2 (Anti-Windup + Deadband)");
+    Serial.println("BOOT OK - MELHORADO 4 (versao estavel original)");
     Serial.printf("PINOS -> STEP:%d DIR:%d EN:%d ENC_A:%d ENC_B:%d\n",
                   PIN_STEP, PIN_DIR, PIN_EN, PIN_ENC_A, PIN_ENC_B);
+    Serial.printf("Braco: K_POS=%.5f  K_VEL=%.5f  K_I=%.5f\n",
+                  K_POS_BRACO, K_VEL_BRACO, K_I_BRACO);
     Serial.println("Comando no Monitor Serial (115200 baud):");
     Serial.println("  'c' -> Zerar angulo de referencia com haste embaixo (0.00°)");
     Serial.println("==================================================");
@@ -250,14 +254,22 @@ void loop() {
                 PID_Reset(&pid);
                 pid.erro_anterior = (SETPOINT_GRAUS - ang) * DEG2RAD;
                 vel_cmd_rad_s     = 0.0f;
+                integral_braco    = 0.0f;
                 step_zero         = g_step_pos;
                 controle_ativo    = true;
             }
 
             // 3) Equação de controle (haste com PID melhorado + centralização do braço)
             float tau_pid   = PID_Calcular(&pid, SETPOINT_GRAUS, ang);
-            float tau_braco = -K_POS_BRACO * braco_rad - K_VEL_BRACO * vel_cmd_rad_s;
-            tau = -(tau_pid + tau_braco);
+
+            integral_braco += braco_rad * DT;
+            if (integral_braco >  1.0f) integral_braco =  1.0f;
+            if (integral_braco < -1.0f) integral_braco = -1.0f;
+
+            float tau_braco = -K_POS_BRACO * braco_rad
+                              - K_VEL_BRACO * vel_cmd_rad_s
+                              - K_I_BRACO   * integral_braco;   // NOVO: termo integral
+            tau = -tau_pid + tau_braco;
 
             // 4) Aplica no gerador de passos DDS de 20 kHz
             aplicar_torque_motor(tau);
@@ -266,6 +278,7 @@ void loop() {
             if (controle_ativo) {
                 controle_ativo = false;
                 vel_cmd_rad_s  = 0.0f;
+                integral_braco = 0.0f;
                 g_rate_half    = 0;
                 PID_Reset(&pid);
             }
@@ -276,9 +289,9 @@ void loop() {
         if (millis() - last_log >= 100) {
             last_log = millis();
             float freq_step = vel_cmd_rad_s * (PASSOS_POR_VOLTA / (2.0f * PI_F));
-            Serial.printf("ctrl=%s | pulsos=%6ld | ang=%6.2f° | braco=%+6.1f° | tau=%+6.4f N.m | step=%+7.1f Hz\n",
+            Serial.printf("ctrl=%s | pulsos=%6ld | ang=%6.2f° | braco=%+6.1f° | Ibr=%+6.3f | tau=%+6.4f N.m | step=%+7.1f Hz\n",
                           controle_ativo ? "ON " : "OFF",
-                          encoder_count, ang, braco_deg, tau, freq_step);
+                          encoder_count, ang, braco_deg, integral_braco, tau, freq_step);
         }
     }
 }

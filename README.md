@@ -8,10 +8,16 @@ This repository presents the complete mathematical modeling, Root-Locus (LGR) PI
 
 To overcome the practical challenges of stepper-driven inverted pendulums—such as electromagnetic interference (EMI) on encoder lines, derivative quantization spikes at $1\text{ kHz}$ sampling, and non-minimum phase arm drift—the firmware implements:
 1. **A deterministic $20\text{ kHz}$ ($50\text{ }\mu\text{s}$) Hardware Timer ISR in `IRAM`** that simultaneously samples the quadrature encoder via direct register reads (`GPIO.in1.val`) with a state-transition lookup table (eliminating GPIO interrupt floods), synthesizes jitter-free `STEP` pulses via a 32-bit Direct Digital Synthesis (DDS) phase accumulator (`REG_WRITE`), and clocks the discrete PID control loop at an exact $1\text{ kHz}$ ($\Delta t = 1\text{ ms}$) rate.
-2. **Three progressive firmware versions** for academic and practical comparison:
-   - [`firmware/simples/`](firmware/simples/): Direct implementation of the theoretical Root-Locus PID ($UP = 5\%$, $T_s = 0.5\text{ s}$) and linearized plant transfer function $G(s) = \frac{1398.89}{s^2 - 33.8276}$.
-   - [`firmware/melhorado/`](firmware/melhorado/): Bench-validated baseline controller incorporating a $15\text{ Hz}$ first-order low-pass derivative filter, leaky integrator ($\text{leak}_i = 0.995$), and soft arm feedback.
-   - [`firmware/melhorado2/`](firmware/melhorado2/): Advanced anti-windup controller with stable deadband ($|e| \le 0.3^\circ$) to eliminate continuous tremor, manual swing-up reset ($|e| > 5^\circ$), and pure integration for persistent disturbance rejection.
+2. **Production-Ready Firmware ([`firmware/final/`](firmware/final/)):** Bench-validated controller combining LGR gains ($K = 0.015601$, $z = 5.9888\text{ rad/s}$), a $15\text{ Hz}$ first-order low-pass derivative filter, smart 3-zone integrator with anti-windup, soft arm position/velocity feedback, and safety cable protection ($\pm 130^\circ$).
+3. **Research and Reference Materials ([`materiais_pesquisa/`](materiais_pesquisa/)):** Academic reference implementations and future proposals for advanced state-space and observers.
+
+---
+
+## Bancada Experimental
+
+| Pêndulo Equilibrado no Topo ($180^\circ$) | Bancada Experimental Completa | Eletrônica (ESP32 + Shield A4988) |
+| :---: | :---: | :---: |
+| ![Pêndulo Equilibrado](docs/img/pendulo_equilibrado.jpeg) | ![Bancada Experimental](docs/img/bancada.jpeg) | ![ESP32 e Shield](docs/img/esp32_shield.jpeg) |
 
 ---
 
@@ -19,26 +25,37 @@ To overcome the practical challenges of stepper-driven inverted pendulums—such
 
 ```text
 control_systems/
-├── README.md                          # Visão geral do projeto (PT-BR / EN), hardware e pinagem
+├── README.md                          # Visão geral do projeto, fotos da bancada, hardware e guia de execução
 ├── docs/
 │   ├── projeto.md                     # Memorial de cálculo completo em LaTeX (Modelagem, LGR e Ganhos)
 │   ├── code.md                        # Documentação da arquitetura de tempo real, ISR de 20 kHz e filtros
-│   ├── complementar.ipynb             # Cálculo automático de K e z + Tabela e Gráfico de validação na simulação
-│   ├── img/                           # Figuras e gráficos de simulação
+│   ├── complementar.ipynb             # Cálculo automático de K e z + Validação da simulação
+│   ├── img/                           # Fotos da bancada física e esquemáticos
+│   │   ├── pendulo_equilibrado.jpeg   # Haste em equilíbrio vertical superior estável
+│   │   ├── bancada.jpeg               # Visão geral da bancada experimental
+│   │   └── esp32_shield.jpeg          # Microcontrolador ESP32 e Shield A4988
 │   └── datasheets/                    # Datasheets do motor NEMA 14, driver A4988 e encoder incremental
-└── firmware/
-    ├── simples/                       # Versão 1: Teoria pura (PID + FT pura)
-    │   ├── simples.ino
-    │   ├── pid.h
-    │   └── pid.c
-    ├── melhorado/                     # Versão 2: Filtro derivativo (15 Hz), limite 4 kHz e controle do braço
-    │   ├── melhorado.ino
-    │   ├── pid.h
-    │   └── pid.c
-    └── melhorado2/                    # Versão 3: Anti-windup com zona morta (elimina trepidação) e rejeição de distúrbios
-        ├── melhorado2.ino
-        ├── pid.h
-        └── pid.c
+│
+├── firmware/                          # FIRMWARE FINAL DE PRODUÇÃO (Gravar na bancada)
+│   └── final/                         # Diretório compatível com Arduino IDE
+│       ├── final.ino                  # Código-fonte principal com temporizador de 20 kHz e controle a 1 kHz
+│       ├── pid.c                      # Implementação do PID com filtro derivativo e anti-windup
+│       └── pid.h                      # Estruturas e protótipos do controlador
+│
+├── materiais_pesquisa/                # MATERIAL DE APOIO, PESQUISA E CONTINUIDADE
+│   ├── README.md                      # Descrição dos materiais de apoio
+│   ├── ref/                           # Códigos de referência de laboratório e estudos iniciais
+│   │   ├── pendulo_invertido_esp32_final.ino  # Implementação acadêmica com observador de estados
+│   │   └── simples/                   # Versão inicial com FT pura sem filtros
+│   │       ├── simples.ino
+│   │       ├── pid.c
+│   │       └── pid.h
+│   └── proposta_futura/               # Propostas de melhorias analíticas futuras
+│       ├── proposta_futura.ino
+│       ├── pid.c
+│       └── pid.h
+│
+└── dashboard/                         # Interface de telemetria e gráficos em tempo real
 ```
 
 ---
@@ -71,6 +88,8 @@ control_systems/
 
 ## Como Executar na Bancada
 
-1. Abra [`firmware/melhorado/melhorado.ino`](firmware/melhorado/melhorado.ino) na Arduino IDE e grave no ESP32.
-2. Com a haste parada na posição vertical inferior ($0^\circ$), abra o Monitor Serial (`115200` baud) e envie `'c'` caso queira recalibrar o zero.
-3. Levante a haste manualmente até próximo ao topo ($180^\circ \pm 30^\circ$): o controle armará automaticamente (`ctrl=ON`).
+1. Abra a pasta [`firmware/final/final.ino`](firmware/final/final.ino) na Arduino IDE (ou PlatformIO) e grave no ESP32.
+2. Com a haste parada na posição vertical inferior ($0^\circ$), abra o Monitor Serial (`115200` baud).
+3. Se necessário, envie `'c'` para calibrar a referência com a haste em repouso apontando para baixo ($0,00^\circ$).
+4. Levante a haste manualmente até próximo ao topo ($180^\circ \pm 30^\circ$): o controle armará automaticamente (`ctrl=ON`).
+5. Caso o braço gire mais de $\pm 130^\circ$, o desarme de segurança desliga o motor para proteger o cabo do encoder.

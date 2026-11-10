@@ -14,17 +14,16 @@ extern "C" {
 #define DERIV_FILT_HZ  15.0f
 
 typedef struct {
-    float Kp, Ki, Kd;      /* ganhos calculados a partir de K e z      */
-    float dt;              /* período de amostragem (s)                */
-    float limite_torque;   /* saturação (N.m); <= 0 => sem saturação   */
-    float integral;        /* acumulador do integrador                 */
-    float erro_anterior;   /* erro anterior em rad                     */
-    float deriv_filtrada;  /* derivada filtrada (passa-baixas)         */
-    float alpha_d;         /* coeficiente do filtro da derivada        */
-    float leak_i;          /* fator de vazamento do integrador (0.995) */
+    float Kp, Ki, Kd;      /* ganhos calculados a partir de K e z        */
+    float dt;              /* período de amostragem (s)                  */
+    float limite_torque;   /* saturação máxima de torque (N.m)           */
+    float integral;        /* acumulador da ação integral                */
+    float erro_anterior;   /* erro da amostra anterior (rad)             */
+    float deriv_filtrada;  /* derivada filtrada passa-baixas (rad/s)     */
+    float alpha_d;         /* coeficiente do filtro IIR da derivada      */
 } PID_t;
 
-/* Inicialização PRINCIPAL: a partir do K e z do LGR.
+/* Inicialização a partir dos parâmetros K e z do LGR:
  *   Kp = 2*K*z     Ki = K*z^2     Kd = K
  */
 void PID_InitKz(PID_t *pid, float K, float z,

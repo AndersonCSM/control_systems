@@ -62,8 +62,9 @@ float PID_Calcular(PID_t *pid, float setpoint_graus,
     float i_novo = pid->integral;
 
     if (abs_erro_graus > 5.0f) {
+        pid->integral = 0.0f;
         i_novo = 0.0f;                        /* Anti-windup de subida manual */
-    } else if (abs_erro_graus > 0.30f) {
+    } else if (abs_erro_graus > 0.10f) {
         i_novo = pid->integral + e * pid->dt; /* Integração pura para rejeição de distúrbios */
     }
     /* Se abs_erro_graus <= 0.30f: mantém i_novo = pid->integral (estável no topo) */
